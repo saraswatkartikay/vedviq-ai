@@ -11,7 +11,13 @@ from urllib.parse import urlparse
 import httpx
 
 from app.complaint_resources import COMPLAINT_RESOURCES, SAFE_FALLBACK
-from app.config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT_SECONDS
+from app.config import (
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT_SECONDS,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+)
 from app.services.analyzer import redact
 from app.services.language import detect_language
 
@@ -44,11 +50,13 @@ _UNAUTHORIZED_DEBIT = re.compile(
     r"\b(?:transaction|payment)\b.{0,35}\b(?:did not|didn't|maine nahi|not me|unknown|nahi kiya)\b)"
 )
 _REPORTING_OR_LOSS = re.compile(r"(?i)\b(?:lost money|money lost|paise kho|cybercrime helpline|report(?:ing)? a (?:scam|fraud)|report.{0,35}(?:suspicious|scam|fraud|call|message|email)|(?:suspicious|scam|fraud).{0,35}report)\b")
+
 SETUP_INSTRUCTIONS = [
-    "Install Ollama from https://ollama.com/download and start the Ollama service.",
-    f"In a terminal, run: ollama pull {OLLAMA_MODEL}",
-    "Restart the ScamSathi API. The assistant checks the configured local model and will show ready only when it is present.",
+    "Set GEMINI_API_KEY in the backend environment variables.",
+    "Verify that the configured Gemini model is available to your API key.",
+    "Restart or redeploy the backend after updating environment variables.",
 ]
+
 
 
 def redact_chat(content: str, max_len: int = 12000) -> str:
@@ -70,50 +78,76 @@ def _is_loopback_url(base_url: str) -> bool:
         return False
 
 
+
 async def inspect_local_model() -> dict:
-    """Return observed availability, with short timeouts and no model pull side effects."""
-    started = time.perf_counter()
-    if not _is_loopback_url(OLLAMA_BASE_URL) or not OLLAMA_MODEL:
-        logger.info("ollama_status_timing model=%s available=false elapsed_ms=0", OLLAMA_MODEL)
-        return {"runtime_available": False, "model_available": False, "ready": False}
+    """Check whether the configured Gemini model is reachable."""
+    if not GEMINI_API_KEY or not GEMINI_MODEL:
+        return {
+            "runtime_available": False,
+            "model_available": False,
+            "model_loaded": False,
+            "ready": False,
+        }
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}"
+    )
+    headers = {"x-goog-api-key": GEMINI_API_KEY}
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.5, connect=1.0), follow_redirects=False) as client:
-            # The tags check confirms installation; ps is an observation only
-            # and may be unavailable on older Ollama versions.
-            tags_response, ps_response = await asyncio.gather(
-                client.get(f"{OLLAMA_BASE_URL}/api/tags"),
-                client.get(f"{OLLAMA_BASE_URL}/api/ps"),
-                return_exceptions=True,
-            )
-            if isinstance(tags_response, Exception):
-                raise tags_response
-            tags_response.raise_for_status()
-            models = tags_response.json().get("models", [])
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(5.0, connect=3.0),
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(url, headers=headers)
 
-            def matches(item):
-                name = str(item.get("name", ""))
-                return name.split(":")[0] == OLLAMA_MODEL.split(":")[0] and name.split(":", 1)[-1] == OLLAMA_MODEL.split(":", 1)[-1]
+        if response.is_success:
+            return {
+                "runtime_available": True,
+                "model_available": True,
+                "model_loaded": False,
+                "ready": True,
+            }
 
-            available = any(matches(item) for item in models)
-            loaded = False
-            if not isinstance(ps_response, Exception) and ps_response.is_success:
-                loaded = any(matches(item) for item in ps_response.json().get("models", []))
-            logger.info("ollama_status_timing model=%s runtime=true installed=%s loaded=%s elapsed_ms=%.2f", OLLAMA_MODEL, available, loaded, (time.perf_counter() - started) * 1000)
-            return {"runtime_available": True, "model_available": available, "model_loaded": loaded, "ready": available}
+        logger.info("gemini_status_http status=%s", response.status_code)
+        return {
+            "runtime_available": True,
+            "model_available": False,
+            "model_loaded": False,
+            "ready": False,
+        }
+
     except (httpx.HTTPError, ValueError, TypeError) as exc:
-        logger.info("ollama_status_unavailable type=%s elapsed_ms=%.2f", type(exc).__name__, (time.perf_counter() - started) * 1000)
-        return {"runtime_available": False, "model_available": False, "ready": False}
+        logger.info("gemini_status_unavailable type=%s", type(exc).__name__)
+        return {
+            "runtime_available": False,
+            "model_available": False,
+            "model_loaded": False,
+            "ready": False,
+        }
+
 
 
 def status_payload(runtime: dict) -> dict:
+    configured = bool(GEMINI_API_KEY and GEMINI_MODEL)
+
     return {
-        "runtime": "Ollama (local)",
-        **runtime,
-        "model": OLLAMA_MODEL,
-        "setup_instructions": SETUP_INSTRUCTIONS,
+        "runtime": "Gemini API (hosted)",
+        "runtime_available": configured,
+        "model": GEMINI_MODEL,
+        "model_available": configured,
+        "model_loaded": False,
+        "ready": configured,
+        "setup_instructions": (
+            []
+            if configured
+            else [
+                "Set the GEMINI_API_KEY environment variable in your backend deployment."
+            ]
+        ),
         "resources": COMPLAINT_RESOURCES,
     }
-
 
 def curated_secret_guidance(message: str, language_hint: str | None = None) -> dict | None:
     """Return a transparent rule-based safety answer for secret-credential questions."""
@@ -275,58 +309,103 @@ Official directory: {official}
 Safe fallback: {SAFE_FALLBACK}"""
 
 
-async def generate_local_reply(messages: list[dict], language_hint: str | None = None) -> tuple[str, dict]:
-    if not _is_loopback_url(OLLAMA_BASE_URL):
-        raise RuntimeError("Ollama must be configured on a local loopback address.")
+async def generate_local_reply(
+    messages: list[dict],
+    language_hint: str | None = None,
+) -> tuple[str, dict]:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Gemini API key is not configured.")
+
     timeout = max(5.0, min(float(OLLAMA_TIMEOUT_SECONDS), 90.0))
     prompt_started = time.perf_counter()
+
+    system_parts = [_system_prompt(language_hint)]
+    conversation = []
+
+    for item in messages:
+        role = item.get("role", "")
+        content = item.get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            continue
+
+        if role == "system":
+            system_parts.append(content)
+        elif role in ("user", "assistant"):
+            conversation.append({
+                "role": "user" if role == "user" else "model",
+                "parts": [{"text": content}],
+            })
+
+    if not conversation:
+        raise ValueError("No valid conversation messages were provided.")
+
     payload = {
-        "model": OLLAMA_MODEL,
-        "stream": True,
-        "messages": [{"role": "system", "content": _system_prompt(language_hint)}, *messages],
-        "keep_alive": "10m",
-        "options": {"temperature": 0.2, "num_predict": 192, "num_ctx": 4096},
+        "systemInstruction": {
+            "parts": [{"text": "\n\n".join(system_parts)}]
+        },
+        "contents": conversation,
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 512,
+        },
     }
-    prompt_preparation_ms = round((time.perf_counter() - prompt_started) * 1000, 2)
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent"
+    )
+    headers = {
+        "x-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+    prompt_preparation_ms = round(
+        (time.perf_counter() - prompt_started) * 1000, 2
+    )
     started = time.perf_counter()
-    first_chunk_ms = None
-    content_parts: list[str] = []
-    result: dict = {}
-    logger.info("ollama_prompt model=%s messages=%d chars=%d context_chars=%d stream=true", OLLAMA_MODEL, len(payload["messages"]), sum(len(item["content"]) for item in payload["messages"]), sum(len(item["content"]) for item in messages))
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=2.0), follow_redirects=False) as client:
-        async with client.stream("POST", f"{OLLAMA_BASE_URL}/api/chat", json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                try:
-                    chunk = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ValueError("Ollama returned malformed streaming data.") from exc
-                piece = chunk.get("message", {}).get("content", "")
-                if isinstance(piece, str) and piece:
-                    if first_chunk_ms is None:
-                        first_chunk_ms = round((time.perf_counter() - started) * 1000, 2)
-                    content_parts.append(piece)
-                if chunk.get("done"):
-                    result = chunk
-    content = "".join(content_parts).strip()
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout, connect=10.0),
+        follow_redirects=False,
+    ) as client:
+        response = await client.post(
+            url,
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+    candidates = result.get("candidates") or []
+    if not candidates:
+        raise ValueError("Gemini returned no response candidates.")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    content = "".join(
+        part.get("text", "")
+        for part in parts
+        if isinstance(part.get("text"), str)
+    ).strip()
+
     if not content:
-        raise ValueError("Ollama returned an empty response.")
-    if result.get("done_reason") == "length":
-        logger.warning("ollama_inference_incomplete model=%s reason=length generated_tokens=%s", OLLAMA_MODEL, result.get("eval_count"))
-        raise ValueError("Ollama stopped at the response token limit; incomplete reply was not shown.")
-    ns_to_ms = lambda value: round(float(value or 0) / 1_000_000, 2)
+        raise ValueError("Gemini returned an empty response.")
+
     timings = {
         "prompt_preparation_ms": prompt_preparation_ms,
         "request_wall_ms": round((time.perf_counter() - started) * 1000, 2),
-        "time_to_first_text_chunk_ms": first_chunk_ms if first_chunk_ms is not None else 0.0,
-        "ollama_total_ms": ns_to_ms(result.get("total_duration")),
-        "model_load_ms": ns_to_ms(result.get("load_duration")),
-        "prompt_eval_ms": ns_to_ms(result.get("prompt_eval_duration")),
-        "generation_ms": ns_to_ms(result.get("eval_duration")),
-        "prompt_tokens": result.get("prompt_eval_count"),
-        "generated_tokens": result.get("eval_count"),
+        "time_to_first_text_ms": 0.0,
+        "gemini_total_ms": round((time.perf_counter() - started) * 1000, 2),
+        "prompt_tokens": result.get("usageMetadata", {}).get(
+            "promptTokenCount"
+        ),
+        "generated_tokens": result.get("usageMetadata", {}).get(
+            "candidatesTokenCount"
+        ),
     }
-    logger.info("ollama_inference_timing model=%s timings=%s", OLLAMA_MODEL, timings)
+
+    logger.info(
+        "gemini_inference_timing model=%s timings=%s",
+        GEMINI_MODEL,
+        timings,
+    )
     return content[:12000], timings

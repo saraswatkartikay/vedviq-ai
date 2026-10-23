@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text,inspect
 from PIL import Image
-from app.config import CORS_ORIGINS,MAX_UPLOAD_BYTES,DEFAULT_STORE_RAW_CONTENT,RETENTION_DAYS,SAFE_BROWSING_API_KEY,OLLAMA_MODEL
+from app.config import CORS_ORIGINS, MAX_UPLOAD_BYTES, DEFAULT_STORE_RAW_CONTENT, RETENTION_DAYS, SAFE_BROWSING_API_KEY, GEMINI_MODEL
 from app.database import Base,engine,get_db,SessionLocal
 from app.models import ScanRecord,SystemSetting,AssistantConversationRecord,AssistantMessageRecord
 from app.schemas import MessageAnalyzeRequest,URLAnalyzeRequest,AnalysisResult,DashboardAnalytics,SystemStatusResponse,PrivacySettingsPayload,MLAssessment,ThreatIntelResult,AssistantStatus,AssistantChatRequest,AssistantChatResponse,AssistantConversation,AssistantConversationSummary,AssistantMessage
@@ -150,7 +150,7 @@ async def assistant_chat(payload:AssistantChatRequest,request:Request,db:Session
   saved_answer=next((item for item in later_messages if item.role=='assistant' and not item.content.startswith('[CURATED_SAFETY_GUIDANCE]\n')),None)
   if saved_answer:
    request.state.assistant_timings.update({'scanner':0.0,'history_context':0.0,'model_inference':0.0})
-   return AssistantChatResponse(conversation_id=conversation.id,assistant_status='ready',assistant_reply=saved_answer.content,model=OLLAMA_MODEL,setup_instructions=[],analysis=None,analysis_note=analysis_note,stored_redacted=True)
+   return AssistantChatResponse(conversation_id=conversation.id,assistant_status='ready',assistant_reply=saved_answer.content,model=GEMINI_MODEL,setup_instructions=[],analysis=None,analysis_note=analysis_note,stored_redacted=True)
   request.state.assistant_timings['scanner']=0.0
  else:
   scan_started=time.perf_counter()
@@ -206,7 +206,7 @@ async def assistant_chat(payload:AssistantChatRequest,request:Request,db:Session
   safe_reply=redact_chat(reply,max_len=12000)
   db.add(AssistantMessageRecord(conversation_id=conversation.id,role='assistant',content=safe_reply))
   conversation.updated_at=datetime.now(timezone.utc);db.commit()
-  return AssistantChatResponse(conversation_id=conversation.id,assistant_status='ready',assistant_reply=safe_reply,model=OLLAMA_MODEL,setup_instructions=[],analysis=analysis,analysis_note=analysis_note,stored_redacted=True)
+  return AssistantChatResponse(conversation_id=conversation.id,assistant_status='ready',assistant_reply=safe_reply,model=GEMINI_MODEL,setup_instructions=[],analysis=analysis,analysis_note=analysis_note,stored_redacted=True)
  return AssistantChatResponse(conversation_id=conversation.id,assistant_status=state,assistant_reply=None,model=None,setup_instructions=SETUP_INSTRUCTIONS,analysis=analysis,analysis_note=analysis_note,stored_redacted=True)
 
 @app.post('/api/v1/analyze/message',response_model=AnalysisResult)
