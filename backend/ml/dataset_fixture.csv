@@ -1,0 +1,25 @@
+text,label
+"Congratulations, you won a prize. Pay a processing fee to claim your lottery reward",scam
+"Your bank account will be blocked tonight. Update KYC immediately using this link",scam
+"Share your OTP and ATM PIN to verify your account",scam
+"Scan QR code and enter UPI PIN to receive cashback",scam
+"Earn Rs 5000 per day by rating videos. Deposit money to unlock tasks",scam
+"This is a CBI officer. Join video call for digital arrest",scam
+"Install AnyDesk so customer support can help with your bank account",scam
+"Your parcel is held by customs. Transfer verification money now",scam
+"Dear customer, click the link to update your PAN or account will be suspended",scam
+"Paise receive karne ke liye UPI PIN daalo aur QR scan karo",scam
+"Aapka account block ho jayega, OTP bhejo",scam
+"Congratulations you have won a lucky draw, send fee first",scam
+"Hey, are we meeting at the library at four today?",benign
+"Your class assignment is due tomorrow. Please check the course portal",benign
+"The meeting has been moved to 3 PM. Let me know if that works",benign
+"Thank you for your order. Your package is scheduled for delivery",benign
+"Please call me when you reach campus",benign
+"Your electricity bill payment was received successfully",benign
+"Happy birthday! Hope you have a wonderful day",benign
+"Can you share the notes from today's lecture?",benign
+"Kal library mein milte hain, assignment complete karna hai",benign
+"Your appointment is confirmed for Tuesday at 10 AM",benign
+"The college fest registration closes on Friday",benign
+"Please review the project README before our meeting",benign

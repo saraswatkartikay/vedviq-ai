@@ -1,0 +1,14 @@
+export interface RuleIndicator { id:string; name:string; severity:string; description:string; matched_text?:string|null; weight:number }
+export interface MLAssessment { status:string; predicted_label:string; calibrated_probability:number|null; top_features:string[]; model_version:string|null; note:string }
+export interface ThreatIntelResult { provider:string; mode:string; verdict:string; details:string }
+export interface AnalysisResult { scan_id:number; scan_type:string; created_at:string; redacted_preview:string; raw_content_stored:boolean; extracted_text?:string|null; normalized_url?:string|null; risk_score:number; risk_level:string; assessment_basis?:"external_threat_match"|"suspicious_pattern"|"warning_signals"|"insufficient_evidence"; scam_category:string; summary_explanation:string; recommended_actions:string[]; limitations_note:string; ml_assessment:MLAssessment; rule_indicators:RuleIndicator[]; threat_intel:ThreatIntelResult; suspicious_spans:string[] }
+export interface DashboardAnalytics { total_scans:number; high_or_critical_count:number; risk_distribution:{name:string;value:number}[]; category_breakdown:{category:string;count:number}[]; scans_over_time:{date:string;scans:number;high_risk:number}[]; recent_scans:AnalysisResult[]; model_status:Record<string,any>; threat_intel_configured:boolean }
+export interface PrivacySettingsPayload { store_raw_content:boolean; retention_days:number }
+export interface SystemStatusResponse { api_status:string; app_version:string; database_connected:boolean; ocr_engine_available:boolean; threat_intel_provider:string; threat_intel_configured:boolean; model_metadata:Record<string,any>; privacy_settings:PrivacySettingsPayload }
+export interface ComplaintResource { id:string; name:string; url:string; jurisdiction:string; purpose:string; source_urls:string[]; verified_on:string; official:boolean }
+export interface AssistantStatus { runtime:string; runtime_available:boolean; model:string; model_available:boolean; model_loaded?:boolean; ready:boolean; setup_instructions:string[]; resources:ComplaintResource[] }
+export interface AssistantMessage { id:number; role:"user"|"assistant"; content:string; created_at:string }
+export interface AssistantConversationSummary { id:string; title:string; created_at:string; updated_at:string }
+export interface AssistantConversation { id:string; title:string; created_at:string; updated_at:string; messages:AssistantMessage[] }
+export interface AssistantSafetyGuidance { title:string; text:string; source:"curated_safety_rule" }
+export interface AssistantChatResponse { conversation_id:string; assistant_status:"ready"|"unavailable"|"timeout"|"error"|"guidance"; assistant_reply:string|null; model:string|null; setup_instructions:string[]; analysis:AnalysisResult|null; analysis_note?:string|null; safety_guidance?:AssistantSafetyGuidance|null; stored_redacted:boolean }

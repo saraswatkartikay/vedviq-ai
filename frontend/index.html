@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#171b1a" />
+    <meta name="description" content="VEDVIQ AI helps identify suspicious messages and links." />
+    <title>VEDVIQ AI — Scam Detection</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem("scamsathi-theme");
+        const preferredTheme = savedTheme === "light" || savedTheme === "dark"
+          ? savedTheme
+          : (window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.dataset.theme = preferredTheme;
+        document.documentElement.classList.toggle("dark", preferredTheme === "dark");
+        document.querySelector('meta[name="theme-color"]')?.setAttribute("content", preferredTheme === "dark" ? "#171b1a" : "#f1f4f0");
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+        document.documentElement.classList.add("dark");
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

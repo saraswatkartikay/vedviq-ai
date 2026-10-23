@@ -1,0 +1,18 @@
+services:
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: sqlite:////app/data/scamsathi.db
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:8080
+      SAFE_BROWSING_API_KEY: ${SAFE_BROWSING_API_KEY:-}
+      DEFAULT_STORE_RAW_CONTENT: "false"
+    volumes: ["scam_data:/app/data"]
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on: [backend]
+    restart: unless-stopped
+volumes:
+  scam_data:
