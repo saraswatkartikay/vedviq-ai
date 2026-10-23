@@ -1,5 +1,5 @@
 import type {AnalysisResult,AssistantChatResponse,AssistantConversation,AssistantConversationSummary,AssistantStatus,ComplaintResource,DashboardAnalytics,PrivacySettingsPayload,SystemStatusResponse} from '../types/api';
-const API_BASE=(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1').replace(/\/$/,'');
+const API_BASE=(import.meta.env.VITE_API_BASE_URL || 'https://vedviq-ai.onrender.com/api/v1').replace(/\/$/,'');
 async function request<T>(path:string, init:RequestInit={}):Promise<T>{
  const isAssistantChat=path==='/assistant/chat';
  const started=performance.now();
