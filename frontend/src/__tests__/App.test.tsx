@@ -40,8 +40,8 @@ const status = {
   privacy_settings: { store_raw_content: false, retention_days: 30 },
 };
 const assistantStatus = {
-  runtime: "Ollama (local)", runtime_available: false, model: "qwen2.5:3b", model_available: false, ready: false,
-  setup_instructions: ["Install Ollama", "ollama pull qwen2.5:3b"], resources: [
+  runtime: "Gemini API (hosted)", runtime_available: false, model: "gemini-2.5-flash", model_available: false, ready: false,
+  setup_instructions: ["Set GEMINI_API_KEY in the backend environment variables."], resources: [
     { id: "national-cybercrime-portal", name: "National Cyber Crime Reporting Portal", url: "https://cybercrime.gov.in/", jurisdiction: "India", purpose: "Report cybercrime.", source_urls: ["https://cybercrime.gov.in/"], verified_on: "2026-10-23", official: true },
   ],
 };
@@ -78,7 +78,7 @@ beforeEach(() => {
   vi.mocked(api.getAssistantConversation).mockResolvedValue({ id: "conversation-1", title: "Help", created_at: "2026-10-21T09:30:00Z", updated_at: "2026-10-21T09:30:00Z", messages: [] });
   vi.mocked(api.createAssistantConversation).mockResolvedValue({ id: "conversation-1", title: "New conversation", created_at: "2026-10-21T09:30:00Z", updated_at: "2026-10-21T09:30:00Z" });
   vi.mocked(api.deleteAssistantConversation).mockResolvedValue({ deleted: true, conversation_id: "conversation-1" });
-  vi.mocked(api.assistantChat).mockResolvedValue({ conversation_id: "conversation-1", assistant_status: "unavailable", assistant_reply: null, model: null, setup_instructions: ["ollama pull qwen2.5:3b"], analysis: null, stored_redacted: true });
+  vi.mocked(api.assistantChat).mockResolvedValue({ conversation_id: "conversation-1", assistant_status: "unavailable", assistant_reply: null, model: null, setup_instructions: ["Set GEMINI_API_KEY in the backend environment variables."], analysis: null, stored_redacted: true });
 });
 afterEach(() => {
   cleanup();
@@ -293,16 +293,16 @@ describe("VEDVIQ AI workspace", () => {
     expect(screen.getByRole("heading", { name: "Screenshot Scan" })).toBeInTheDocument();
   });
 
-  it("shows honest local-model status, sends scanner analysis, and keeps reporting links available", async () => {
+  it("shows honest hosted-Gemini status, sends scanner analysis, and keeps reporting links available", async () => {
     vi.mocked(api.assistantChat).mockResolvedValueOnce({
       conversation_id: "conversation-1", assistant_status: "unavailable", assistant_reply: null,
-      model: null, setup_instructions: ["ollama pull qwen2.5:3b"], analysis: report, stored_redacted: true,
+      model: null, setup_instructions: ["Set GEMINI_API_KEY in the backend environment variables."], analysis: report, stored_redacted: true,
     });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "AI Assistant" }));
 
     expect(await screen.findByRole("heading", { name: "Ask before you act." })).toBeInTheDocument();
-    expect(screen.getByText("Local AI is not ready")).toBeInTheDocument();
+    expect(screen.getByText("Hosted Gemini is not ready")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Open official portal/ })).toHaveAttribute("href", "https://cybercrime.gov.in/");
     fireEvent.change(screen.getByLabelText("Message VEDVIQ AI"), { target: { value: "Please review this message" } });
     fireEvent.change(screen.getByLabelText("Analysis"), { target: { value: "message" } });
@@ -339,7 +339,7 @@ describe("VEDVIQ AI workspace", () => {
     vi.mocked(api.assistantChat).mockResolvedValueOnce({
       conversation_id: "conversation-1", assistant_status: "ready",
       assistant_reply: "Draft for review only.\n\n### Email draft\nSubject: Unrecognized debit\n\nDear Bank Support,\nPlease review this transaction.\n\nRegards,\n[Your name]",
-      model: "qwen2.5:3b", setup_instructions: [], analysis: null, stored_redacted: true,
+      model: "gemini-2.5-flash", setup_instructions: [], analysis: null, stored_redacted: true,
     });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "AI Assistant" }));
@@ -359,7 +359,7 @@ describe("VEDVIQ AI workspace", () => {
     vi.mocked(api.assistantChat).mockResolvedValueOnce({
       conversation_id: "conversation-1", assistant_status: "ready",
       assistant_reply: "Bhai, official bank app mein transaction details check karo. OTP kisi ko mat dena.",
-      model: "qwen2.5:3b", setup_instructions: [], analysis: null, stored_redacted: true,
+      model: "gemini-2.5-flash", setup_instructions: [], analysis: null, stored_redacted: true,
     });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "AI Assistant" }));
@@ -381,14 +381,14 @@ describe("VEDVIQ AI workspace", () => {
       })
       .mockResolvedValueOnce({
         conversation_id: "conversation-1", assistant_status: "ready", assistant_reply: "Verify through your bank's official app.",
-        model: "qwen2.5:3b", setup_instructions: [], analysis: null, stored_redacted: true,
+        model: "gemini-2.5-flash", setup_instructions: [], analysis: null, stored_redacted: true,
       });
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "AI Assistant" }));
     await screen.findByRole("heading", { name: "Ask before you act." });
     fireEvent.change(screen.getByLabelText("Message VEDVIQ AI"), { target: { value: "How does device fingerprinting identify a malicious login?" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await screen.findByText(/The local model timed out/);
+    await screen.findByText(/The Gemini API request timed out/);
     const firstPayload = vi.mocked(api.assistantChat).mock.calls[0][0];
     expect(firstPayload.language_hint).toBeUndefined();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));

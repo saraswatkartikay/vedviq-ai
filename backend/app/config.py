@@ -16,3 +16,5 @@ OLLAMA_TIMEOUT_SECONDS=float(os.getenv('OLLAMA_TIMEOUT_SECONDS','45'))
 ARTIFACT_DIR=BASE_DIR/'ml'/'artifacts'
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+# Keep the previous timeout variable as a fallback for existing deployments.
+GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", os.getenv("OLLAMA_TIMEOUT_SECONDS", "45")))

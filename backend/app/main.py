@@ -193,16 +193,16 @@ async def assistant_chat(payload:AssistantChatRequest,request:Request,db:Session
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
   state='timeout'
  except httpx.HTTPStatusError as exc:
-  logger.info('ollama_chat_http_status status=%s',exc.response.status_code)
+  logger.info('gemini_chat_http_status status=%s',exc.response.status_code)
   state='unavailable' if exc.response.status_code in (404,503) else 'error'
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
  except (httpx.HTTPError,RuntimeError,ValueError) as exc:
-  logger.info('ollama_chat_failed type=%s',type(exc).__name__)
+  logger.info('gemini_chat_failed type=%s',type(exc).__name__)
   state='unavailable' if isinstance(exc,httpx.ConnectError) else 'error'
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
  else:
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
-  if model_timings: request.state.assistant_timings.update({f'ollama_{key}':value for key,value in model_timings.items() if isinstance(value,(int,float))})
+  if model_timings: request.state.assistant_timings.update({f'gemini_{key}':value for key,value in model_timings.items() if isinstance(value,(int,float))})
   safe_reply=redact_chat(reply,max_len=12000)
   db.add(AssistantMessageRecord(conversation_id=conversation.id,role='assistant',content=safe_reply))
   conversation.updated_at=datetime.now(timezone.utc);db.commit()

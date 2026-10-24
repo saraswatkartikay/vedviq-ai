@@ -20,7 +20,7 @@ def test_official_reporting_resources_have_sources_and_https(resource_id):
     assert resource["verified_on"] == VERIFIED_ON
 
 
-def test_assistant_status_reflects_missing_local_model(client, monkeypatch):
+def test_assistant_status_reflects_missing_hosted_model(client, monkeypatch):
     async def missing():
         return {"runtime_available": False, "model_available": False, "ready": False}
 
@@ -33,34 +33,63 @@ def test_assistant_status_reflects_missing_local_model(client, monkeypatch):
     assert response.json()["setup_instructions"]
 
 
-@pytest.mark.parametrize("loaded", [False, True])
-def test_model_status_distinguishes_installed_from_currently_loaded(monkeypatch, loaded):
+@pytest.mark.parametrize(("status_code", "expected_model_available"), [(200, True), (403, False), (404, False)])
+def test_gemini_status_probes_the_configured_model_without_exposing_the_key(monkeypatch, status_code, expected_model_available):
+    secret = "test-gemini-secret"
+    seen = {}
+    monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", secret)
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
+
     class Response:
-        def __init__(self, payload): self.payload = payload
+        def __init__(self, code): self.status_code = code
         @property
-        def is_success(self): return True
-        def raise_for_status(self): return None
-        def json(self): return self.payload
+        def is_success(self): return 200 <= self.status_code < 300
 
     class FakeClient:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): return None
-        async def get(self, url):
-            if url.endswith('/api/tags'):
-                return Response({"models": [{"name": assistant_service.OLLAMA_MODEL}]})
-            return Response({"models": [{"name": assistant_service.OLLAMA_MODEL}] if loaded else []})
+        async def get(self, url, headers):
+            seen.update(url=url, headers=headers)
+            return Response(status_code)
 
     monkeypatch.setattr(assistant_service.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    runtime = asyncio.run(assistant_service.inspect_local_model())
+    status = assistant_service.status_payload(runtime)
+    assert seen["url"].endswith("/models/gemini-test-model")
+    assert seen["headers"]["x-goog-api-key"] == secret
+    assert runtime["runtime_available"] is True
+    assert runtime["model_available"] is expected_model_available
+    assert runtime["model_loaded"] is False
+    assert runtime["ready"] is expected_model_available
+    assert status["ready"] is expected_model_available
+    assert status["model"] == "gemini-test-model"
+    assert secret not in repr(status)
+
+
+def test_status_payload_cannot_claim_ready_when_runtime_check_is_inconsistent(monkeypatch):
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
+    status = assistant_service.status_payload({
+        "runtime_available": True,
+        "model_available": False,
+        "ready": True,
+    })
+    assert status["ready"] is False
+    assert status["setup_instructions"]
+
+
+def test_gemini_status_skips_probe_when_api_key_is_missing(monkeypatch):
+    monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
+    monkeypatch.setattr(assistant_service.httpx, "AsyncClient", lambda *args, **kwargs: pytest.fail("No request should be made without an API key"))
     status = asyncio.run(assistant_service.inspect_local_model())
-    assert status["runtime_available"] is True
-    assert status["model_available"] is True
-    assert status["model_loaded"] is loaded
-    assert status["ready"] is True
+    assert status["ready"] is False
+    assert status["runtime_available"] is False
+    assert status["model_available"] is False
 
 
-def test_chat_is_honest_when_local_model_is_unavailable(client, monkeypatch):
+def test_chat_is_honest_when_hosted_model_is_unavailable(client, monkeypatch):
     async def unavailable(*args, **kwargs):
-        raise httpx.ConnectError("Ollama is unavailable")
+        raise httpx.ConnectError("Gemini API is unavailable")
 
     monkeypatch.setattr(main, "generate_local_reply", unavailable)
     response = client.post("/api/v1/assistant/chat", json={"message": "How does device fingerprinting identify a malicious login?"})
@@ -153,7 +182,7 @@ def test_secret_safety_question_is_guidance_and_chat_prompt_is_not_scanned(clien
 ])
 def test_secret_safety_guidance_detects_hindi_and_hinglish(client, monkeypatch, message, language, expected):
     async def must_not_call_model(*args, **kwargs):
-        pytest.fail("Curated credential advice should be available without Ollama")
+        pytest.fail("Curated credential advice should be available without Gemini")
 
     monkeypatch.setattr(main, "generate_local_reply", must_not_call_model)
     response = client.post("/api/v1/assistant/chat", json={"message": message, "analysis_type": "none", "language_hint": None if language == "auto" else language})
@@ -245,7 +274,7 @@ def test_english_and_hinglish_examples_get_supported_safe_guidance_without_scann
         pytest.fail("Conversation questions must not be used as scanner samples")
 
     async def must_not_call_model(*args, **kwargs):
-        pytest.fail("A supported safety intent should return before local model inference")
+        pytest.fail("A supported safety intent should return before model inference")
 
     monkeypatch.setattr(main, "analyze_text", must_not_scan)
     monkeypatch.setattr(main, "generate_local_reply", must_not_call_model)
@@ -293,56 +322,106 @@ def test_explicit_language_overrides_auto_detect():
     assert assistant_service.resolve_reply_language("bhai paise kat gye", "en") == "en"
 
 
-def test_ollama_stream_records_first_text_chunk_and_completion(monkeypatch):
+def test_gemini_generate_content_preserves_request_and_response_timings(monkeypatch):
     seen = {}
+    monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", "test-gemini-secret")
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
 
     class FakeResponse:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): return None
-        def raise_for_status(self): return None
-        async def aiter_lines(self):
-            yield '{"message":{"content":"Check your "},"done":false}'
-            yield '{"message":{"content":"official bank app."},"done":false}'
-            yield '{"message":{"content":""},"done":true,"done_reason":"stop","total_duration":2000000,"load_duration":0,"prompt_eval_duration":500000,"eval_duration":1000000,"prompt_eval_count":20,"eval_count":8}'
+        is_success = True
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": "Check your official bank app."}]}}], "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 8}}
 
     class FakeClient:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): return None
-        def stream(self, method, url, json):
-            seen.update(method=method, url=url, payload=json)
+        async def post(self, url, headers, json):
+            seen.update(url=url, headers=headers, payload=json)
             return FakeResponse()
 
     monkeypatch.setattr(assistant_service.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
-    reply, timings = asyncio.run(assistant_service.generate_local_reply([{"role": "user", "content": "How do I protect my account?"}], "hinglish"))
+    reply, timings = asyncio.run(assistant_service.generate_local_reply([
+        {"role": "system", "content": "Scan evidence is advisory."},
+        {"role": "user", "content": "How do I protect my account?"},
+    ], "hinglish"))
     assert reply == "Check your official bank app."
-    assert seen["payload"]["stream"] is True
-    assert "Roman letters" in seen["payload"]["messages"][0]["content"]
-    assert timings["time_to_first_text_chunk_ms"] >= 0
+    assert seen["url"].endswith("/models/gemini-test-model:generateContent")
+    assert seen["headers"]["x-goog-api-key"] == "test-gemini-secret"
+    assert "test-gemini-secret" not in seen["url"]
+    assert "Roman letters" in seen["payload"]["systemInstruction"]["parts"][0]["text"]
+    assert "Scan evidence is advisory." in seen["payload"]["systemInstruction"]["parts"][0]["text"]
+    assert seen["payload"]["contents"] == [{"role": "user", "parts": [{"text": "How do I protect my account?"}]}]
+    assert seen["payload"]["generationConfig"]["maxOutputTokens"] == 512
+    assert timings["request_wall_ms"] >= 0
+    assert timings["time_to_first_text_ms"] == 0.0
     assert timings["generated_tokens"] == 8
 
 
-def test_ollama_stream_refuses_incomplete_length_limited_reply(monkeypatch):
+@pytest.mark.parametrize("response_body", [
+    {},
+    {"candidates": []},
+    {"candidates": [{"content": {"parts": []}}]},
+    {"candidates": [{"content": {"parts": [{"text": "   "}]}}]},
+])
+def test_gemini_empty_or_invalid_responses_raise_a_handled_error(monkeypatch, response_body):
+    monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", "test-gemini-secret")
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
+
     class FakeResponse:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): return None
-        def raise_for_status(self): return None
-        async def aiter_lines(self):
-            yield '{"message":{"content":"This answer is cut"},"done":false}'
-            yield '{"message":{"content":""},"done":true,"done_reason":"length","eval_count":192}'
+        is_success = True
+        status_code = 200
+        text = ""
+        def json(self): return response_body
 
     class FakeClient:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): return None
-        def stream(self, *args, **kwargs): return FakeResponse()
+        async def post(self, *args, **kwargs): return FakeResponse()
 
     monkeypatch.setattr(assistant_service.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
-    with pytest.raises(ValueError, match="incomplete reply was not shown"):
+    with pytest.raises(ValueError, match="Gemini returned"):
         asyncio.run(assistant_service.generate_local_reply([{"role": "user", "content": "Explain this"}]))
+
+
+def test_gemini_http_error_is_logged_safely_and_raised(monkeypatch, caplog):
+    secret = "test-gemini-secret"
+    monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", secret)
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com/test")
+    response = httpx.Response(403, text=f'{{"error":"permission denied","echo":"{secret}"}}', request=request)
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def post(self, *args, **kwargs): return response
+
+    monkeypatch.setattr(assistant_service.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(assistant_service.generate_local_reply([{"role": "user", "content": "Explain this"}]))
+    assert "gemini_api_error status=403" in caplog.text
+    assert "permission denied" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_gemini_http_error_does_not_crash_chat_endpoint(client, monkeypatch):
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com/test")
+    response = httpx.Response(403, text='{"error":"permission denied"}', request=request)
+
+    async def rejected(*args, **kwargs):
+        raise httpx.HTTPStatusError("request rejected", request=request, response=response)
+
+    monkeypatch.setattr(main, "generate_local_reply", rejected)
+    result = client.post("/api/v1/assistant/chat", json={"message": "How do phishing kits work?"})
+    assert result.status_code == 200
+    assert result.json()["assistant_status"] == "error"
+    assert result.json()["assistant_reply"] is None
 
 
 def test_timeout_does_not_fabricate_a_model_reply_for_unmatched_intent(client, monkeypatch):
     async def timed_out(*args, **kwargs):
-        raise httpx.ReadTimeout("local model timed out")
+        raise httpx.ReadTimeout("Gemini API request timed out")
 
     monkeypatch.setattr(main, "generate_local_reply", timed_out)
     response = client.post("/api/v1/assistant/chat", json={"message": "How does device fingerprinting identify a malicious login?"})
@@ -367,7 +446,7 @@ def test_retry_request_reuses_saved_user_and_scanner_result(client, monkeypatch)
         nonlocal replies
         replies += 1
         if replies == 1:
-            raise httpx.ConnectError("Ollama is unavailable")
+            raise httpx.ConnectError("Gemini API is unavailable")
         return "Review complete. The scanner result is advisory."
 
     monkeypatch.setattr(main, "analyze_text", counted_analyze)

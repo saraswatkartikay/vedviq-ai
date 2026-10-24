@@ -1,4 +1,4 @@
-"""Local-only Ollama integration. It never downloads a model or fakes a reply."""
+"""Hosted Gemini integration with explicit rule-based safety guidance."""
 
 import asyncio
 import ipaddress
@@ -14,9 +14,9 @@ from app.complaint_resources import COMPLAINT_RESOURCES, SAFE_FALLBACK
 from app.config import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
-    OLLAMA_TIMEOUT_SECONDS,
     GEMINI_API_KEY,
     GEMINI_MODEL,
+    GEMINI_TIMEOUT_SECONDS,
 )
 from app.services.analyzer import redact
 from app.services.language import detect_language
@@ -127,24 +127,20 @@ async def inspect_local_model() -> dict:
             "ready": False,
         }
 
-
-
 def status_payload(runtime: dict) -> dict:
-    configured = bool(GEMINI_API_KEY and GEMINI_MODEL)
+    runtime_available = bool(runtime.get("runtime_available", False))
+    model_available = bool(runtime.get("model_available", False))
+    ready = bool(runtime.get("ready", False)) and runtime_available and model_available
 
     return {
         "runtime": "Gemini API (hosted)",
-        "runtime_available": configured,
+        "runtime_available": runtime_available,
         "model": GEMINI_MODEL,
-        "model_available": configured,
+        "model_available": model_available,
         "model_loaded": False,
-        "ready": configured,
+        "ready": ready,
         "setup_instructions": (
-            []
-            if configured
-            else [
-                "Set the GEMINI_API_KEY environment variable in your backend deployment."
-            ]
+            [] if ready else SETUP_INSTRUCTIONS
         ),
         "resources": COMPLAINT_RESOURCES,
     }
@@ -192,7 +188,7 @@ def _chat_language(message: str, language_hint: str | None = None) -> str:
 
 
 def resolve_reply_language(message: str, language_hint: str | None = None) -> str:
-    """Resolve the UI's auto setting to a useful language instruction for Ollama."""
+    """Resolve the UI's auto setting to a useful language instruction for Gemini."""
     hinted = (language_hint or "auto").strip().lower()
     return _chat_language(message) if hinted in ("", "auto", "und") else hinted
 
@@ -302,7 +298,7 @@ def _system_prompt(language_hint: str | None) -> str:
         "hi": "Reply in Hindi using Devanagari script.",
         "en": "Reply in clear, natural English.",
     }.get(resolved, f"Reply in the language identified by this explicit language selection: {resolved}.")
-    return f"""You are ScamSathi, a cyber-safety assistant. Answer in the user's language and conversational style where possible, including English, Hindi in Devanagari, Romanized Hindi, Hinglish, and major Indian languages. Understand common informal spellings and code-mixed sentences; do not treat language identification as intent detection. Keep answers concise, calm, and practical. A general question is advice, not suspicious sample content; analyze only content explicitly supplied for a separate scan. State uncertainty; an unknown URL is not safe by default. Never request OTPs, PINs, passwords, full account/card numbers, or unnecessary personal data. Ask only non-sensitive report facts (approximate time, channel, incident type, money lost). For suspected financial fraud, advise contacting the bank through a channel found independently and the official 1930 helpline / https://cybercrime.gov.in/. Separate official destinations from suggestions. Complaint/email text is only a draft; never say it was submitted. Use placeholders for unknown facts. Do not claim checks that were not performed or guarantee recovery. Keep the answer concise and finish complete sentences.
+    return f"""You are VEDVIQ AI, a cyber-safety assistant. Answer in the user's language and conversational style where possible, including English, Hindi in Devanagari, Romanized Hindi, Hinglish, and major Indian languages. Understand common informal spellings and code-mixed sentences; do not treat language identification as intent detection. Keep answers concise, calm, and practical. A general question is advice, not suspicious sample content; analyze only content explicitly supplied for a separate scan. State uncertainty; an unknown URL is not safe by default. Never request OTPs, PINs, passwords, full account/card numbers, or unnecessary personal data. Ask only non-sensitive report facts (approximate time, channel, incident type, money lost). For suspected financial fraud, advise contacting the bank through a channel found independently and the official 1930 helpline / https://cybercrime.gov.in/. Separate official destinations from suggestions. Complaint/email text is only a draft; never say it was submitted. Use placeholders for unknown facts. Do not claim checks that were not performed or guarantee recovery. Keep the answer concise and finish complete sentences.
 Language instruction: {language_instruction}
 Resolved language hint: {resolved}
 Official directory: {official}
@@ -313,10 +309,10 @@ async def generate_local_reply(
     messages: list[dict],
     language_hint: str | None = None,
 ) -> tuple[str, dict]:
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Gemini API key is not configured.")
+    if not GEMINI_API_KEY or not GEMINI_MODEL:
+        raise RuntimeError("Gemini API key and model must be configured.")
 
-    timeout = max(5.0, min(float(OLLAMA_TIMEOUT_SECONDS), 90.0))
+    timeout = max(5.0, min(float(GEMINI_TIMEOUT_SECONDS), 90.0))
     prompt_started = time.perf_counter()
 
     system_parts = [_system_prompt(language_hint)]
@@ -373,34 +369,49 @@ async def generate_local_reply(
             headers=headers,
             json=payload,
         )
+    if not response.is_success:
+        error_body = response.text
+        if GEMINI_API_KEY:
+            error_body = error_body.replace(GEMINI_API_KEY, "[REDACTED]")
+        error_body = " ".join(error_body.split())[:1500]
+        logger.error(
+            "gemini_api_error status=%s body=%s",
+            response.status_code,
+            error_body,
+        )
         response.raise_for_status()
-        result = response.json()
 
+    result = response.json()
+    if not isinstance(result, dict):
+        raise ValueError("Gemini returned an invalid response body.")
     candidates = result.get("candidates") or []
-    if not candidates:
+    if not isinstance(candidates, list) or not candidates:
         raise ValueError("Gemini returned no response candidates.")
 
-    parts = candidates[0].get("content", {}).get("parts", [])
+    candidate = candidates[0]
+    candidate_content = candidate.get("content") if isinstance(candidate, dict) else None
+    parts = candidate_content.get("parts", []) if isinstance(candidate_content, dict) else []
+    if not isinstance(parts, list):
+        parts = []
+
     content = "".join(
         part.get("text", "")
         for part in parts
-        if isinstance(part.get("text"), str)
+        if isinstance(part, dict) and isinstance(part.get("text"), str)
     ).strip()
 
     if not content:
         raise ValueError("Gemini returned an empty response.")
 
+    usage = result.get("usageMetadata")
+    usage = usage if isinstance(usage, dict) else {}
     timings = {
         "prompt_preparation_ms": prompt_preparation_ms,
         "request_wall_ms": round((time.perf_counter() - started) * 1000, 2),
         "time_to_first_text_ms": 0.0,
         "gemini_total_ms": round((time.perf_counter() - started) * 1000, 2),
-        "prompt_tokens": result.get("usageMetadata", {}).get(
-            "promptTokenCount"
-        ),
-        "generated_tokens": result.get("usageMetadata", {}).get(
-            "candidatesTokenCount"
-        ),
+        "prompt_tokens": usage.get("promptTokenCount"),
+        "generated_tokens": usage.get("candidatesTokenCount"),
     }
 
     logger.info(
