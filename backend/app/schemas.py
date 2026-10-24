@@ -27,4 +27,4 @@ class AssistantChatRequest(BaseModel):
  language_hint:Optional[Literal['en','hi','hinglish','bn','mr','te','ta','gu','ur','kn','ml','or','pa','as']]=None
  client_request_id:Optional[str]=Field(default=None,max_length=36)
 class AssistantSafetyGuidance(BaseModel): title:str; text:str; source:Literal['curated_safety_rule']='curated_safety_rule'
-class AssistantChatResponse(BaseModel): conversation_id:str; assistant_status:Literal['ready','unavailable','timeout','error','guidance']; assistant_reply:Optional[str]=None; model:Optional[str]=None; setup_instructions:list[str]=[]; analysis:Optional[AnalysisResult]=None; analysis_note:Optional[str]=None; safety_guidance:Optional[AssistantSafetyGuidance]=None; stored_redacted:bool=True
+class AssistantChatResponse(BaseModel): conversation_id:str; assistant_status:Literal['ready','unavailable','timeout','error','guidance']; assistant_reply:Optional[str]=None; model:Optional[str]=None; setup_instructions:list[str]=[]; analysis:Optional[AnalysisResult]=None; analysis_note:Optional[str]=None; safety_guidance:Optional[AssistantSafetyGuidance]=None; failure_code:Optional[str]=None; stored_redacted:bool=True

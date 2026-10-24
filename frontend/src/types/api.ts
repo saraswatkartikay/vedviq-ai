@@ -11,4 +11,4 @@ export interface AssistantMessage { id:number; role:"user"|"assistant"; content:
 export interface AssistantConversationSummary { id:string; title:string; created_at:string; updated_at:string }
 export interface AssistantConversation { id:string; title:string; created_at:string; updated_at:string; messages:AssistantMessage[] }
 export interface AssistantSafetyGuidance { title:string; text:string; source:"curated_safety_rule" }
-export interface AssistantChatResponse { conversation_id:string; assistant_status:"ready"|"unavailable"|"timeout"|"error"|"guidance"; assistant_reply:string|null; model:string|null; setup_instructions:string[]; analysis:AnalysisResult|null; analysis_note?:string|null; safety_guidance?:AssistantSafetyGuidance|null; stored_redacted:boolean }
+export interface AssistantChatResponse { conversation_id:string; assistant_status:"ready"|"unavailable"|"timeout"|"error"|"guidance"; assistant_reply:string|null; model:string|null; setup_instructions:string[]; analysis:AnalysisResult|null; analysis_note?:string|null; safety_guidance?:AssistantSafetyGuidance|null; failure_code?:string|null; stored_redacted:boolean }

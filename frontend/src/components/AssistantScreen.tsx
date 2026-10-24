@@ -30,6 +30,18 @@ const starterPrompts = [
   { icon: FileText, text: "Help me prepare a cybercrime complaint or bank email draft. Ask only for non-sensitive details.", mode: "none" as AnalysisMode },
 ];
 
+function geminiFailureMessage(code: string | null | undefined, statusReady: boolean) {
+  if (code === "gemini_http_503") return "Gemini returned HTTP 503; its generation service is temporarily unavailable. Retry shortly.";
+  if (code === "gemini_http_404") return "Gemini returned HTTP 404 for generation. Check that the configured model supports generateContent.";
+  if (code === "gemini_connection") return "The backend could not connect to Gemini for this request.";
+  if (code === "gemini_configuration") return "Gemini generation is not configured on the backend.";
+  if (code === "gemini_timeout") return "The Gemini generation request timed out.";
+  if (code === "gemini_invalid_response") return "Gemini returned an empty or invalid generation response.";
+  if (code?.startsWith("gemini_http_")) return `Gemini returned ${code.replace("gemini_http_", "HTTP ")} for the generation request.`;
+  if (statusReady) return "The model status check passed, but Gemini could not generate a reply for this request.";
+  return "Gemini could not generate a reply for this request.";
+}
+
 const languageOptions = [
   ["auto", "Auto-detect"], ["en", "English"], ["hi", "हिन्दी"], ["hinglish", "Hinglish"],
   ["bn", "বাংলা"], ["ta", "தமிழ்"], ["te", "తెలుగు"], ["mr", "मराठी"],
@@ -232,13 +244,13 @@ export default function AssistantScreen() {
         setMessages((items) => [...items, { id: -(++localId.current), role: "assistant", content: response.assistant_reply as string, created_at: new Date().toISOString() }]);
       }
       if (response.assistant_status === "unavailable") {
-        setAssistantNotice(`Hosted Gemini is unavailable${status?.model ? ` (${status.model} is not ready)` : ""}.${response.safety_guidance ? " The clearly labelled rule-based guidance is shown above; no generated answer was substituted." : " No generated answer was substituted and no safe rule-based fallback matched this question."} You can still use the scanner and official reporting links.`);
+        setAssistantNotice(`${geminiFailureMessage(response.failure_code, status?.ready === true)}${response.safety_guidance ? " The clearly labelled rule-based guidance is shown above; no generated answer was substituted." : " No generated answer was substituted and no safe rule-based fallback matched this question."} You can still use the scanner and official reporting links.`);
         setRetryRequest({ ...requestToSend, conversationId: response.conversation_id });
       } else if (response.assistant_status === "timeout") {
         setAssistantNotice(`The Gemini API request timed out.${response.safety_guidance ? " The clearly labelled rule-based guidance is shown above; no generated answer was substituted." : " No generated answer was substituted and no safe rule-based fallback matched this question."}`);
         setRetryRequest({ ...requestToSend, conversationId: response.conversation_id });
       } else if (response.assistant_status === "error") {
-        setAssistantNotice(`The Gemini API returned an error.${response.safety_guidance ? " The clearly labelled rule-based guidance is shown above; no generated answer was substituted." : " No generated answer was substituted and no safe rule-based fallback matched this question."} Check the backend Gemini configuration and model access, then retry.`);
+        setAssistantNotice(`${geminiFailureMessage(response.failure_code, status?.ready === true)}${response.safety_guidance ? " The clearly labelled rule-based guidance is shown above; no generated answer was substituted." : " No generated answer was substituted and no safe rule-based fallback matched this question."} Check the backend Gemini configuration and model access, then retry.`);
         setRetryRequest({ ...requestToSend, conversationId: response.conversation_id });
       } else {
         setRetryRequest(null);
@@ -269,7 +281,7 @@ export default function AssistantScreen() {
   return <div className="assistant-screen screen-enter">
     <header className="assistant-page-head">
       <div><p className="assistant-eyebrow"><span /> CYBER SAFETY / AI ASSISTANT</p><h1>Ask before you act.</h1><p>Understand a suspicious message, find the right reporting route, and prepare your next step.</p></div>
-      <div className={`assistant-runtime ${ready ? "is-ready" : status ? "is-missing" : "is-checking"}`} role="status"><i />{ready ? `Gemini API available · ${status?.model}` : status ? "Gemini API unavailable" : statusError ? "Assistant status unavailable" : "Checking Gemini API"}</div>
+      <div className={`assistant-runtime ${ready ? "is-ready" : status ? "is-missing" : "is-checking"}`} role="status"><i />{ready ? `Gemini model supports generation · ${status?.model}` : status ? "Gemini generation unavailable" : statusError ? "Assistant status unavailable" : "Checking Gemini model"}</div>
     </header>
 
     {status && !status.ready && <section className="assistant-model-banner" role="status"><span><AlertTriangle size={18} /></span><div><strong>Hosted Gemini is not ready</strong><p>{status.runtime_available ? `The Gemini API responded, but the configured model (${status.model}) could not be verified.` : "The Gemini API could not be reached or configured."} Clearly labelled rule-based safety guidance remains available for supported situations. Other AI answers are unavailable; message, URL, and screenshot checks and the official reporting directory still work.</p><details><summary>Check the Gemini configuration <ChevronDown size={14} /></summary><ol>{status.setup_instructions.map((step) => <li key={step}>{step}</li>)}</ol><code>GEMINI_MODEL={status.model}</code></details></div></section>}

@@ -44,6 +44,7 @@ def test_gemini_status_probes_the_configured_model_without_exposing_the_key(monk
         def __init__(self, code): self.status_code = code
         @property
         def is_success(self): return 200 <= self.status_code < 300
+        def json(self): return {"supportedGenerationMethods": ["generateContent"]}
 
     class FakeClient:
         async def __aenter__(self): return self
@@ -77,6 +78,27 @@ def test_status_payload_cannot_claim_ready_when_runtime_check_is_inconsistent(mo
     assert status["setup_instructions"]
 
 
+def test_gemini_status_requires_generate_content_support(monkeypatch):
+    monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", "test-gemini-secret")
+    monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
+
+    class Response:
+        status_code = 200
+        is_success = True
+        def json(self): return {"supportedGenerationMethods": ["countTokens"]}
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return None
+        async def get(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(assistant_service.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    runtime = asyncio.run(assistant_service.inspect_local_model())
+    assert runtime["runtime_available"] is True
+    assert runtime["model_available"] is False
+    assert runtime["ready"] is False
+
+
 def test_gemini_status_skips_probe_when_api_key_is_missing(monkeypatch):
     monkeypatch.setattr(assistant_service, "GEMINI_API_KEY", "")
     monkeypatch.setattr(assistant_service, "GEMINI_MODEL", "gemini-test-model")
@@ -97,6 +119,7 @@ def test_chat_is_honest_when_hosted_model_is_unavailable(client, monkeypatch):
     body = response.json()
     assert body["assistant_status"] == "unavailable"
     assert body["assistant_reply"] is None
+    assert body["failure_code"] == "gemini_connection"
     assert body["setup_instructions"]
     assert "scanner;dur=" in response.headers["server-timing"]
     assert "model_inference;dur=" in response.headers["server-timing"]
@@ -417,6 +440,7 @@ def test_gemini_http_error_does_not_crash_chat_endpoint(client, monkeypatch):
     assert result.status_code == 200
     assert result.json()["assistant_status"] == "error"
     assert result.json()["assistant_reply"] is None
+    assert result.json()["failure_code"] == "gemini_http_403"
 
 
 def test_timeout_does_not_fabricate_a_model_reply_for_unmatched_intent(client, monkeypatch):
@@ -429,6 +453,7 @@ def test_timeout_does_not_fabricate_a_model_reply_for_unmatched_intent(client, m
     assert response.status_code == 200
     assert body["assistant_status"] == "timeout"
     assert body["assistant_reply"] is None
+    assert body["failure_code"] == "gemini_timeout"
     assert body["safety_guidance"] is None
 
 

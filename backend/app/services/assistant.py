@@ -103,11 +103,20 @@ async def inspect_local_model() -> dict:
             response = await client.get(url, headers=headers)
 
         if response.is_success:
+            model_info = response.json()
+            methods = (
+                model_info.get("supportedGenerationMethods", [])
+                if isinstance(model_info, dict)
+                else []
+            )
+            generation_supported = (
+                isinstance(methods, list) and "generateContent" in methods
+            )
             return {
                 "runtime_available": True,
-                "model_available": True,
+                "model_available": generation_supported,
                 "model_loaded": False,
-                "ready": True,
+                "ready": generation_supported,
             }
 
         logger.info("gemini_status_http status=%s", response.status_code)

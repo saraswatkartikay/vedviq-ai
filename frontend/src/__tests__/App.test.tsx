@@ -314,6 +314,26 @@ describe("VEDVIQ AI workspace", () => {
     expect(screen.getByText("This is a test response from the mocked API.")).toBeInTheDocument();
   });
 
+  it("does not label Gemini not ready when the status probe passed but generation returned 503", async () => {
+    vi.mocked(api.getAssistantStatus).mockResolvedValueOnce({
+      ...assistantStatus, runtime_available: true, model_available: true, ready: true, setup_instructions: [],
+    });
+    vi.mocked(api.assistantChat).mockResolvedValueOnce({
+      conversation_id: "conversation-1", assistant_status: "unavailable", assistant_reply: null,
+      model: null, setup_instructions: [], analysis: null, failure_code: "gemini_http_503", stored_redacted: true,
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "AI Assistant" }));
+    expect(await screen.findByRole("heading", { name: "Ask before you act." })).toBeInTheDocument();
+    expect(screen.getByText(/Gemini model supports generation/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Message VEDVIQ AI"), { target: { value: "How can I check if a bank message is genuine?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByText(/Gemini returned HTTP 503/)).toBeInTheDocument();
+    expect(screen.queryByText(/gemini-2\.5-flash is not ready/)).not.toBeInTheDocument();
+  });
+
   it("keeps a credential safety question separate and labels its curated answer", async () => {
     vi.mocked(api.assistantChat).mockResolvedValueOnce({
       conversation_id: "conversation-1", assistant_status: "guidance", assistant_reply: null,

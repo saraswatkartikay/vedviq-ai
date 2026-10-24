@@ -185,19 +185,28 @@ async def assistant_chat(payload:AssistantChatRequest,request:Request,db:Session
  logger.info('assistant_context_timing request_id=%s history_messages=%d prompt_messages=%d prompt_chars=%d elapsed_ms=%.2f',payload.client_request_id or '-',len(recent),len(context),sum(len(item['content']) for item in context),request.state.assistant_timings['history_context'])
  inference_started=time.perf_counter()
  state='error'
+ failure_code=None
  try:
   generated=await generate_local_reply(context,resolve_reply_language(payload.message,payload.language_hint))
   if isinstance(generated,tuple): reply,model_timings=generated
   else: reply,model_timings=generated,{}
  except httpx.TimeoutException:
+  failure_code='gemini_timeout'
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
   state='timeout'
  except httpx.HTTPStatusError as exc:
   logger.info('gemini_chat_http_status status=%s',exc.response.status_code)
+  failure_code=f'gemini_http_{exc.response.status_code}'
   state='unavailable' if exc.response.status_code in (404,503) else 'error'
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
  except (httpx.HTTPError,RuntimeError,ValueError) as exc:
   logger.info('gemini_chat_failed type=%s',type(exc).__name__)
+  failure_code=(
+   'gemini_connection' if isinstance(exc,httpx.ConnectError) else
+   'gemini_configuration' if isinstance(exc,RuntimeError) else
+   'gemini_invalid_response' if isinstance(exc,ValueError) else
+   'gemini_transport'
+  )
   state='unavailable' if isinstance(exc,httpx.ConnectError) else 'error'
   request.state.assistant_timings['model_inference']=(time.perf_counter()-inference_started)*1000
  else:
@@ -207,7 +216,7 @@ async def assistant_chat(payload:AssistantChatRequest,request:Request,db:Session
   db.add(AssistantMessageRecord(conversation_id=conversation.id,role='assistant',content=safe_reply))
   conversation.updated_at=datetime.now(timezone.utc);db.commit()
   return AssistantChatResponse(conversation_id=conversation.id,assistant_status='ready',assistant_reply=safe_reply,model=GEMINI_MODEL,setup_instructions=[],analysis=analysis,analysis_note=analysis_note,stored_redacted=True)
- return AssistantChatResponse(conversation_id=conversation.id,assistant_status=state,assistant_reply=None,model=None,setup_instructions=SETUP_INSTRUCTIONS,analysis=analysis,analysis_note=analysis_note,stored_redacted=True)
+ return AssistantChatResponse(conversation_id=conversation.id,assistant_status=state,assistant_reply=None,model=None,setup_instructions=SETUP_INSTRUCTIONS,analysis=analysis,analysis_note=analysis_note,failure_code=failure_code,stored_redacted=True)
 
 @app.post('/api/v1/analyze/message',response_model=AnalysisResult)
 def message(payload:MessageAnalyzeRequest,db:Session=Depends(get_db)):
